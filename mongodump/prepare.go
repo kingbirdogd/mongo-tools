@@ -182,6 +182,22 @@ func isReshardingCollection(collName string) bool {
 
 // shouldSkipCollection returns true when a collection name is excluded
 // by the mongodump options.
+func (dump *MongoDump) shouldSkipDb(dbName string) bool {
+	for _, excludedDb := range dump.OutputOptions.ExcludedDbs {
+		if dbName == excludedDb {
+			return true
+		}
+	}
+	for _, excludedDbPrefix := range dump.OutputOptions.ExcludedDbsPrefixes {
+		if strings.HasPrefix(dbName, excludedDbPrefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// shouldSkipCollection returns true when a collection name is excluded
+// by the mongodump options.
 func (dump *MongoDump) shouldSkipCollection(colName string) bool {
 	for _, excludedCollection := range dump.OutputOptions.ExcludedCollections {
 		if colName == excludedCollection {
@@ -190,6 +206,23 @@ func (dump *MongoDump) shouldSkipCollection(colName string) bool {
 	}
 	for _, excludedCollectionPrefix := range dump.OutputOptions.ExcludedCollectionPrefixes {
 		if strings.HasPrefix(colName, excludedCollectionPrefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// shouldSkipCollection with db name returns true when a collection name is excluded
+// by the mongodump options.
+func (dump *MongoDump) shouldSkipDbCollection(dbName, colName string) bool {
+	var dbColName string = dbName + "." + colName;
+	for _, excludedDbCollection := range dump.OutputOptions.ExcludedDbCollections {
+		if dbColName == excludedDbCollection {
+			return true
+		}
+	}
+	for _, excludedDbCollectionPrefix := range dump.OutputOptions.ExcludedDbCollectionPrefixes {
+		if strings.HasPrefix(dbColName, excludedDbCollectionPrefix) {
 			return true
 		}
 	}
@@ -281,7 +314,7 @@ func (dump *MongoDump) CreateUsersRolesVersionIntentsForDB(db string) error {
 // collection is specified by --db and --collection.
 func (dump *MongoDump) CreateCollectionIntent(dbName, colName string) error {
 	if dump.shouldSkipCollection(colName) {
-		log.Logvf(log.DebugLow, "skipping dump of %v.%v, it is excluded", dbName, colName)
+		log.Logvf(log.Info, "skipping dump of %v.%v, it is excluded", dbName, colName)
 		return nil
 	}
 
@@ -410,12 +443,16 @@ func (dump *MongoDump) CreateIntentsForDatabase(dbName string) error {
 			return fmt.Errorf("detected resharding in progress. Cannot dump with --oplog while resharding")
 		}
 		if dump.shouldSkipCollection(collInfo.Name) {
-			log.Logvf(log.DebugLow, "skipping dump of %v.%v, it is excluded", dbName, collInfo.Name)
+			log.Logvf(log.Info, "skipping dump of %v.%v, it is excluded", dbName, collInfo.Name)
+			continue
+		}
+		if dump.shouldSkipDbCollection(dbName, collInfo.Name) {
+			log.Logvf(log.Info, "skipping dump dbConnection of %v.%v, it is excluded", dbName, collInfo.Name)
 			continue
 		}
 
 		if dump.OutputOptions.ViewsAsCollections && !collInfo.IsView() {
-			log.Logvf(log.DebugLow, "skipping dump of %v.%v because it is not a view", dbName, collInfo.Name)
+			log.Logvf(log.Info, "skipping dump of %v.%v because it is not a view", dbName, collInfo.Name)
 			continue
 		}
 		intent, err := dump.NewIntentFromOptions(dbName, collInfo)
@@ -434,10 +471,14 @@ func (dump *MongoDump) CreateAllIntents() error {
 	if err != nil {
 		return fmt.Errorf("error getting database names: %v", err)
 	}
-	log.Logvf(log.DebugHigh, "found databases: %v", strings.Join(dbs, ", "))
+	log.Logvf(log.Info, "found databases: %v", strings.Join(dbs, ", "))
 	for _, dbName := range dbs {
 		if dbName == "local" {
 			// local can only be explicitly dumped
+			continue
+		}
+		if dump.shouldSkipDb(dbName) {
+			log.Logvf(log.Info, "skipping dump of DB %v, it is excluded", dbName);
 			continue
 		}
 		if err := dump.CreateIntentsForDatabase(dbName); err != nil {
