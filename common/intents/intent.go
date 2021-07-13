@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/mongodb/mongo-tools/common/bsonutil"
 	"github.com/mongodb/mongo-tools/common/log"
 	"github.com/mongodb/mongo-tools/common/util"
 	"go.mongodb.org/mongo-driver/bson"
@@ -66,10 +67,28 @@ type Intent struct {
 	// File/collection size, for some prioritizer implementations.
 	// Units don't matter as long as they are consistent for a given use case.
 	Size int64
+
+	// Either view or timeseries. Empty string "" is a regular collection.
+	Type string
+}
+
+func (it *Intent) DataNamespace() string {
+	return it.DB + "." + it.DataCollection()
+}
+
+func (it *Intent) DataCollection() string {
+	if it.IsTimeseries() {
+		return "system.buckets." + it.C
+	}
+	return it.C
 }
 
 func (it *Intent) Namespace() string {
 	return it.DB + "." + it.C
+}
+
+func (it *Intent) IsTimeseries() bool {
+	return it.Type == "timeseries"
 }
 
 func (it *Intent) IsOplog() bool {
@@ -123,11 +142,7 @@ func (it *Intent) IsSpecialCollection() bool {
 }
 
 func (it *Intent) IsView() bool {
-	if it.Options == nil {
-		return false
-	}
-	_, isView := it.Options["viewOn"]
-	return isView
+	return it.Type == "view"
 }
 
 func (it *Intent) MergeIntent(newIt *Intent) {
@@ -147,7 +162,20 @@ func (it *Intent) MergeIntent(newIt *Intent) {
 	if it.MetadataLocation == "" {
 		it.MetadataLocation = newIt.MetadataLocation
 	}
+}
 
+// HasSimpleCollation returns true if the collection does not have a collation
+// specified or if the collation locale is "simple"
+func (it *Intent) HasSimpleCollation() bool {
+	if it == nil || it.Options == nil {
+		return true
+	}
+	collation, ok := it.Options["collation"].(bson.D)
+	if !ok {
+		return true
+	}
+	localeValue, _ := bsonutil.FindValueByKey("locale", &collation)
+	return localeValue == "simple"
 }
 
 type Manager struct {
@@ -386,6 +414,16 @@ func (mgr *Manager) Intents() []*Intent {
 	}
 	if mgr.versionIntent != nil {
 		allIntents = append(allIntents, mgr.versionIntent)
+	}
+	return allIntents
+}
+
+// NormalIntents returns a slice containing all of the normal intents in the manager.
+// NormalIntents is not thread safe.
+func (mgr *Manager) NormalIntents() []*Intent {
+	allIntents := []*Intent{}
+	for _, intent := range mgr.intents {
+		allIntents = append(allIntents, intent)
 	}
 	return allIntents
 }

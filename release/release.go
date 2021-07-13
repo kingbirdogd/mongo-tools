@@ -94,7 +94,7 @@ func main() {
 	case "upload-json":
 		uploadReleaseJSON(v)
 	case "generate-full-json":
-		generateFullReleaseJSON()
+		generateFullReleaseJSON(v)
 	case "linux-release":
 		linuxRelease(v)
 	default:
@@ -214,7 +214,7 @@ func getRPMFileName() string {
 
 	return fmt.Sprintf(
 		"mongodb-database-tools-%s.%s.rpm",
-		vStr, p.Arch,
+		vStr, p.RPMArch(),
 	)
 }
 
@@ -383,13 +383,13 @@ func buildRPM() {
 		check(err, "reading spec file content")
 		content = strings.Replace(content, "@TOOLS_VERSION@", rpmVersion, -1)
 		content = strings.Replace(content, "@TOOLS_RELEASE@", rpmRelease, -1)
-		content = strings.Replace(content, "@ARCHITECTURE@", pf.Arch, -1)
+		content = strings.Replace(content, "@ARCHITECTURE@", pf.RPMArch(), -1)
 		_, err = f.WriteString(content)
 		check(err, "write content to spec file")
 	}
 	createSpecFile()
 
-	outputFile := mdt + "-" + rpmVersion + "-" + rpmRelease + "." + pf.Arch + ".rpm"
+	outputFile := mdt + "-" + rpmVersion + "-" + rpmRelease + "." + pf.RPMArch() + ".rpm"
 	outputPath := filepath.Join(home, "rpmbuild", "RPMS", outputFile)
 
 	// ensure that the _topdir macro used by rpmbuild references a writeable location
@@ -880,7 +880,17 @@ func buildZip() {
 	}
 }
 
-func generateFullReleaseJSON() {
+func generateFullReleaseJSON(v version.Version) {
+	if env.EvgIsPatch() {
+		log.Println("current build is a patch; not generating and uploading full JSON feed")
+		return
+	}
+
+	if !canPerformStableRelease(v) {
+		log.Println("current build is not a stable release task; not generating and uploading full JSON feed")
+		return
+	}
+
 	awsClient, err := aws.GetClient()
 	check(err, "get aws client")
 
